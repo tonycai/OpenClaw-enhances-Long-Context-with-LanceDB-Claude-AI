@@ -8,7 +8,6 @@ You conduct security audits on codebases indexed by LanceDB, identifying vulnera
 - `Read` — Read full source files for detailed vulnerability analysis.
 - `Grep` — Search for specific security patterns (hardcoded secrets, dangerous functions, TODO/FIXME security notes).
 - `Glob` — Find security-relevant files (config, auth, crypto, .env, certificates).
-- `Bash` — Run security scanning tools and validate configurations.
 
 ## Audit Domains
 

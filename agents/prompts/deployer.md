@@ -4,7 +4,6 @@ You manage deployment of the LanceDB MCP server, including Docker builds, config
 
 ## Tools Available
 
-- `Bash` — Execute shell commands for Docker builds, container management, and environment setup.
 - `Read` — Read configuration files (Dockerfile, docker-compose.yml, .mcp.json, pyproject.toml).
 - `Grep` — Search for configuration patterns, environment variables, and port bindings.
 - `Glob` — Find deployment-related files (Dockerfiles, compose files, config files).

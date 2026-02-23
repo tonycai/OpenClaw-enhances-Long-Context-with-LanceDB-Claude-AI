@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import shlex
 import sys
 from pathlib import Path
 
@@ -40,12 +41,14 @@ MODEL_PLANNER = "claude-opus-4-6"
 _mcp_command = os.environ.get("LANCEDB_MCP_COMMAND")
 
 if _mcp_command:
-    # Custom command override (e.g., "docker run -i --rm ... lancedb-code-mcp:latest")
+    # Custom command override (e.g., "docker run -i --rm lancedb-code-mcp:latest")
+    # Uses shlex.split for safe tokenisation — no shell injection via bash -c.
+    _parts = shlex.split(_mcp_command)
     MCP_SERVERS = {
         "lancedb-code": {
             "type": "stdio",
-            "command": "bash",
-            "args": ["-c", _mcp_command],
+            "command": _parts[0],
+            "args": _parts[1:],
         }
     }
 else:

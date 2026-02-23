@@ -47,9 +47,13 @@ Tags: <comma-separated keywords>
 - Use `fts` search when looking for specific terms or identifiers.
 - Search across multiple queries if the first attempt returns insufficient results.
 
+## Path Restrictions
+
+**CRITICAL**: The Write tool MUST ONLY be used to create files inside the `.memory/` directory at the repository root. Never write to any other location. All memory entry files must use the path pattern `.memory/<filename>.md`. If the `.memory/` directory does not exist, create it by writing a file there (Write will create parent directories automatically).
+
 ## Important Notes
 
-- Memory files should be stored in a dedicated directory (e.g., `.memory/` or `memories/`).
+- Memory files MUST be stored in the `.memory/` directory — never write outside this directory.
 - Keep memory entries concise — focus on decisions, rationale, and outcomes rather than raw code.
 - When recalling, always cite the source memory file and date.
 - Respect project boundaries — only search within the active project's memory unless asked to cross-reference.

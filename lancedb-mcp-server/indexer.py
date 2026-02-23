@@ -80,18 +80,32 @@ def discover_files(repo_root: Path, paths: list[str] | None = None) -> list[Path
     repo_root = repo_root.resolve()
 
     if paths is not None:
+        gitignore_spec = _load_gitignore(repo_root)
         result: list[Path] = []
         for p in paths:
             abs_p = Path(p)
             if not abs_p.is_absolute():
                 abs_p = repo_root / p
+            # Reject symlinks before resolving to prevent escape from repo root.
+            if abs_p.is_symlink():
+                logger.warning("Skipping symlink: %s", p)
+                continue
             abs_p = abs_p.resolve()
             # Path-traversal check.
             if not str(abs_p).startswith(str(repo_root)):
                 logger.warning("Skipping path outside repo root: %s", p)
                 continue
-            if abs_p.is_file() and _indexable_extension(abs_p):
-                result.append(abs_p)
+            if not abs_p.is_file() or not _indexable_extension(abs_p):
+                continue
+            rel = str(abs_p.relative_to(repo_root))
+            # Apply the same .gitignore and sensitive-file filtering as full scans.
+            if gitignore_spec and gitignore_spec.match_file(rel):
+                logger.warning("Skipping gitignored file: %s", rel)
+                continue
+            if _is_sensitive(rel, abs_p.name):
+                logger.warning("Skipping sensitive file: %s", rel)
+                continue
+            result.append(abs_p)
         return result
 
     gitignore_spec = _load_gitignore(repo_root)
@@ -106,6 +120,9 @@ def discover_files(repo_root: Path, paths: list[str] | None = None) -> list[Path
 
         for fname in filenames:
             file_path = dirpath / fname
+            # Skip symlinks to prevent following links outside the repo.
+            if file_path.is_symlink():
+                continue
             rel = str(file_path.relative_to(repo_root))
 
             if gitignore_spec and gitignore_spec.match_file(rel):

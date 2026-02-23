@@ -32,7 +32,7 @@ async def run(prompt: str) -> None:
             allowed_tools=["Task", "Read", "Glob", "Grep"],
             mcp_servers=MCP_SERVERS,
             agents=ALL_AGENTS,
-            permission_mode="acceptEdits",
+            permission_mode="default",
             max_turns=30,
         ),
     ):

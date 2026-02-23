@@ -11,7 +11,6 @@ DEVOPS_AGENT = AgentDefinition(
     tools=[
         "mcp__lancedb-code__index_status",
         "mcp__lancedb-code__list_projects",
-        "Bash",
         "Read",
         "Grep",
     ],

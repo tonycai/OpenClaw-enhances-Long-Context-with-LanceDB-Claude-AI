@@ -397,10 +397,10 @@ class TestUS5_7_DeployViaAgent:
         assert DEPLOYER_AGENT.model == "sonnet"
 
     def test_ac2_deployer_tools(self):
-        """AC-2: Deployer has Bash, Read, Grep, Glob."""
+        """AC-2: Deployer has Read, Grep, Glob (no Bash for security)."""
         from agents import DEPLOYER_AGENT
 
-        expected = {"Bash", "Read", "Grep", "Glob"}
+        expected = {"Read", "Grep", "Glob"}
         assert set(DEPLOYER_AGENT.tools) == expected
 
     def test_ac3_deployer_prompt_docker(self):
@@ -512,7 +512,7 @@ class TestUS5_9_SecurityViaAgent:
         assert SECURITY_AGENT.model == "opus"
 
     def test_ac2_security_tools(self):
-        """AC-2: Security has search_code, Read, Grep, Glob, Bash."""
+        """AC-2: Security has search_code, Read, Grep, Glob (no Bash for security)."""
         from agents import SECURITY_AGENT
 
         expected = {
@@ -520,7 +520,6 @@ class TestUS5_9_SecurityViaAgent:
             "Read",
             "Grep",
             "Glob",
-            "Bash",
         }
         assert set(SECURITY_AGENT.tools) == expected
 
@@ -582,13 +581,12 @@ class TestUS5_10_DevOpsViaAgent:
         assert DEVOPS_AGENT.model == "haiku"
 
     def test_ac2_devops_tools(self):
-        """AC-2: DevOps has index_status, list_projects, Bash, Read, Grep."""
+        """AC-2: DevOps has index_status, list_projects, Read, Grep (no Bash for security)."""
         from agents import DEVOPS_AGENT
 
         expected = {
             "mcp__lancedb-code__index_status",
             "mcp__lancedb-code__list_projects",
-            "Bash",
             "Read",
             "Grep",
         }
@@ -645,7 +643,7 @@ class TestUS5_11_PlannerViaAgent:
         assert PLANNER_AGENT.model == "opus"
 
     def test_ac2_planner_tools(self):
-        """AC-2: Planner has search_code, Read, Grep, Glob, Write, Task."""
+        """AC-2: Planner has search_code, Read, Grep, Glob, Task (no Write for security)."""
         from agents import PLANNER_AGENT
 
         expected = {
@@ -653,7 +651,6 @@ class TestUS5_11_PlannerViaAgent:
             "Read",
             "Grep",
             "Glob",
-            "Write",
             "Task",
         }
         assert set(PLANNER_AGENT.tools) == expected
@@ -746,15 +743,15 @@ class TestAgentConfig:
         assert isinstance(server["args"], list)
 
     def test_env_var_override_mcp_command(self):
-        """LANCEDB_MCP_COMMAND env var overrides MCP_SERVERS."""
+        """LANCEDB_MCP_COMMAND env var overrides MCP_SERVERS (shlex-safe)."""
         import config
 
         os.environ["LANCEDB_MCP_COMMAND"] = "docker run -i --rm lancedb:test"
         try:
             importlib.reload(config)
             server = config.MCP_SERVERS["lancedb-code"]
-            assert server["command"] == "bash"
-            assert server["args"] == ["-c", "docker run -i --rm lancedb:test"]
+            assert server["command"] == "docker"
+            assert server["args"] == ["run", "-i", "--rm", "lancedb:test"]
         finally:
             del os.environ["LANCEDB_MCP_COMMAND"]
             importlib.reload(config)

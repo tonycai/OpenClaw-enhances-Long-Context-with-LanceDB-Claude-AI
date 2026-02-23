@@ -13,7 +13,6 @@ PLANNER_AGENT = AgentDefinition(
         "Read",
         "Grep",
         "Glob",
-        "Write",
         "Task",
     ],
 )

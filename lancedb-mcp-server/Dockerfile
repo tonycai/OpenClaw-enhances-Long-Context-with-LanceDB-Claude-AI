@@ -55,18 +55,30 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Install uv (needed for `uv run` in the entrypoint).
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
 
+# Create a non-root user for the runtime stage.
+RUN groupadd --gid 1000 appuser \
+    && useradd --uid 1000 --gid appuser --create-home appuser
+
 WORKDIR /app
 
 # Copy virtual environment and application source from builder.
 COPY --from=builder /app /app
 
-# Copy the pre-downloaded HuggingFace model cache from builder.
-COPY --from=builder /root/.cache/huggingface /root/.cache/huggingface
+# Copy the pre-downloaded HuggingFace model cache into appuser's home.
+COPY --from=builder /root/.cache/huggingface /home/appuser/.cache/huggingface
+
+# Ensure appuser owns the necessary directories.
+RUN chown -R appuser:appuser /app /home/appuser/.cache \
+    && mkdir -p /data/lancedb && chown appuser:appuser /data/lancedb
 
 # Default environment: index data lives in a mountable volume,
 # workspace is the bind-mounted source repo.
 ENV LANCEDB_PATH=/data/lancedb \
-    LANCEDB_REPO_ROOT=/workspace
+    LANCEDB_REPO_ROOT=/workspace \
+    HF_HOME=/home/appuser/.cache/huggingface
+
+# Drop privileges — run as non-root.
+USER appuser
 
 # The MCP server communicates over stdio — no ports to expose.
 # Use `docker run -i` (interactive, no TTY) to preserve the JSON-RPC stream.

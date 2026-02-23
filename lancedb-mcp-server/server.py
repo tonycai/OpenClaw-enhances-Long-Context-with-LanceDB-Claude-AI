@@ -270,6 +270,19 @@ def switch_project(
     """
     app: AppContext = ctx.request_context.lifespan_context
 
+    # Validate repo_root when provided: must be absolute, no traversal components.
+    if repo_root is not None:
+        rr_path = Path(repo_root)
+        if not rr_path.is_absolute():
+            return (
+                f"repo_root must be an absolute path, got: {repo_root}"
+            )
+        # Reject paths containing traversal components.
+        if ".." in rr_path.parts:
+            return (
+                f"repo_root must not contain '..' components, got: {repo_root}"
+            )
+
     try:
         if project in app.projects:
             # Existing project — switch to it.

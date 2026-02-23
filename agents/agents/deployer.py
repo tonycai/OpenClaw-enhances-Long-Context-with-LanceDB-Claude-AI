@@ -9,7 +9,6 @@ DEPLOYER_AGENT = AgentDefinition(
     prompt=load_prompt("deployer.md"),
     model="sonnet",
     tools=[
-        "Bash",
         "Read",
         "Grep",
         "Glob",

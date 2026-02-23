@@ -218,13 +218,13 @@ check("qa has search_code, index_status, and Read tools", test_qa_tools)
 def test_deployer_tools():
     from agents import DEPLOYER_AGENT
 
-    assert "Bash" in DEPLOYER_AGENT.tools
     assert "Read" in DEPLOYER_AGENT.tools
     assert "Grep" in DEPLOYER_AGENT.tools
     assert "Glob" in DEPLOYER_AGENT.tools
+    assert "Bash" not in DEPLOYER_AGENT.tools
 
 
-check("deployer has Bash, Read, Grep, and Glob tools", test_deployer_tools)
+check("deployer has Read, Grep, and Glob tools (no Bash)", test_deployer_tools)
 
 
 def test_memory_tools():
@@ -249,10 +249,10 @@ def test_security_tools():
     assert "Read" in SECURITY_AGENT.tools
     assert "Grep" in SECURITY_AGENT.tools
     assert "Glob" in SECURITY_AGENT.tools
-    assert "Bash" in SECURITY_AGENT.tools
+    assert "Bash" not in SECURITY_AGENT.tools
 
 
-check("security has search_code, Read, Grep, Glob, and Bash tools", test_security_tools)
+check("security has search_code, Read, Grep, and Glob tools (no Bash)", test_security_tools)
 
 
 def test_devops_tools():
@@ -260,12 +260,12 @@ def test_devops_tools():
 
     assert "mcp__lancedb-code__index_status" in DEVOPS_AGENT.tools
     assert "mcp__lancedb-code__list_projects" in DEVOPS_AGENT.tools
-    assert "Bash" in DEVOPS_AGENT.tools
     assert "Read" in DEVOPS_AGENT.tools
     assert "Grep" in DEVOPS_AGENT.tools
+    assert "Bash" not in DEVOPS_AGENT.tools
 
 
-check("devops has index_status, list_projects, Bash, Read, and Grep tools", test_devops_tools)
+check("devops has index_status, list_projects, Read, and Grep tools (no Bash)", test_devops_tools)
 
 
 def test_planner_tools():
@@ -275,11 +275,11 @@ def test_planner_tools():
     assert "Read" in PLANNER_AGENT.tools
     assert "Grep" in PLANNER_AGENT.tools
     assert "Glob" in PLANNER_AGENT.tools
-    assert "Write" in PLANNER_AGENT.tools
     assert "Task" in PLANNER_AGENT.tools
+    assert "Write" not in PLANNER_AGENT.tools
 
 
-check("planner has search_code, Read, Grep, Glob, Write, and Task tools", test_planner_tools)
+check("planner has search_code, Read, Grep, Glob, and Task tools (no Write)", test_planner_tools)
 
 
 # -----------------------------------------------------------------------
@@ -347,14 +347,14 @@ def test_env_var_override():
 
         importlib.reload(config)
         server = config.MCP_SERVERS["lancedb-code"]
-        assert server["command"] == "bash", f"Expected 'bash', got {server['command']!r}"
-        assert server["args"] == ["-c", "docker run -i --rm lancedb:test"]
+        assert server["command"] == "docker", f"Expected 'docker', got {server['command']!r}"
+        assert server["args"] == ["run", "-i", "--rm", "lancedb:test"]
     finally:
         del os.environ["LANCEDB_MCP_COMMAND"]
         importlib.reload(config)
 
 
-check("LANCEDB_MCP_COMMAND env var overrides MCP_SERVERS", test_env_var_override)
+check("LANCEDB_MCP_COMMAND env var overrides MCP_SERVERS (shlex-safe)", test_env_var_override)
 
 
 # -----------------------------------------------------------------------

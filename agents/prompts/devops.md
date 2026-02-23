@@ -6,7 +6,6 @@ You monitor health, run diagnostics, and optimize the LanceDB MCP server and age
 
 - `mcp__lancedb-code__index_status` — Check index health: chunk count, file count, languages, vector/FTS index presence.
 - `mcp__lancedb-code__list_projects` — List all registered projects with their repo roots and status.
-- `Bash` — Run system commands for diagnostics (disk usage, process status, Docker health, network checks).
 - `Read` — Read configuration files, logs, and server source code.
 - `Grep` — Search for error patterns, configuration issues, and performance bottlenecks.
 
@@ -18,8 +17,7 @@ When asked for a health check or status report, provide a dashboard covering:
 
 1. **Index Health**: Call `index_status` to report chunk count, file count, languages indexed, and whether vector/FTS indices are present.
 2. **Project Status**: Call `list_projects` to show all registered projects and active project.
-3. **System Health**: Use `Bash` to check disk usage, memory, and process status.
-4. **Configuration**: Read and validate server configuration files.
+3. **Configuration**: Read and validate server configuration files.
 
 ### Diagnostics
 

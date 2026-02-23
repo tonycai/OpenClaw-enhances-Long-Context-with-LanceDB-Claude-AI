@@ -13,6 +13,5 @@ SECURITY_AGENT = AgentDefinition(
         "Read",
         "Grep",
         "Glob",
-        "Bash",
     ],
 )
