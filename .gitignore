@@ -29,6 +29,10 @@ __pycache__/
 *.pyo
 .venv/
 
+# OpenClaw
+openclaw/.venv/
+.openclaw/
+
 # LanceDB
 .lancedb/
 

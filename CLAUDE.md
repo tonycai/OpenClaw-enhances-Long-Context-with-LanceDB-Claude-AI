@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This project provides both a reference architecture document and a working implementation of a LanceDB MCP server that gives Claude Code CLI semantic code search capabilities, overcoming context window limitations on large codebases.
+This project provides both a reference architecture document and a working implementation of a LanceDB MCP server that gives Claude Code CLI semantic code search capabilities, overcoming context window limitations on large codebases. It also includes the OpenClaw integration layer — a self-hosted AI assistant gateway with persistent memory, session management, security, and diagnostics.
 
 ## Repository Structure
 
@@ -29,6 +29,18 @@ This project provides both a reference architecture document and a working imple
   - `pyproject.toml` — Dependencies (claude-agent-sdk)
   - `agents/` — Agent definitions package (indexer, searcher, reviewer, qa, deployer, memory, security, devops, planner)
   - `prompts/` — System prompts (Markdown, editable without code changes)
+- `openclaw/` — OpenClaw integration layer (Python)
+  - `__init__.py` — Package marker with version
+  - `errors.py` — Exception hierarchy (OpenClawError and subclasses)
+  - `config.py` — Dataclass configuration with JSON persistence
+  - `security.py` — Token auth, channel pairing, blast radius, tool audit
+  - `sessions.py` — File-based session CRUD, compaction, archival
+  - `memory.py` — Workspace files (SOUL/MEMORY/SESSION-STATE), autoRecall, autoCapture
+  - `diagnostics.py` — Health checks, repair, terminal-friendly reports
+  - `gateway.py` — Async HTTP gateway (aiohttp, 6 endpoints)
+  - `cli.py` — Click-based CLI (onboard, start, stop, doctor, logs, sessions, pairing, query)
+  - `pyproject.toml` — Package metadata and dependencies
+  - `test_openclaw.py` — Comprehensive test suite (no API keys needed)
 - `Docs/` — Architectural guide with 36 citations
 - `.mcp.json` — MCP server definitions (gitignored)
 - `.claude/settings.local.json` — Claude Code local settings
@@ -89,6 +101,56 @@ The agent team uses the Claude Agent SDK with 9 specialist subagents:
 | Planner | Implementation plans, task decomposition | search_code, Read, Grep, Glob, Write, Task |
 
 All agents connect to the lancedb-code MCP server via stdio transport. Prompts are in `agents/prompts/*.md` (editable without code changes).
+
+## OpenClaw Gateway Commands
+
+```bash
+# Install dependencies
+cd openclaw && uv sync
+
+# Run all validation tests (no API key needed)
+cd openclaw && uv run pytest test_openclaw.py -v
+
+# Interactive setup wizard
+cd openclaw && uv run openclaw onboard
+
+# Run diagnostics
+cd openclaw && uv run openclaw doctor
+cd openclaw && uv run openclaw doctor --repair
+
+# Start/stop gateway
+cd openclaw && uv run openclaw start
+cd openclaw && uv run openclaw stop
+
+# View logs
+cd openclaw && uv run openclaw logs -f -n 100
+
+# Session management
+cd openclaw && uv run openclaw sessions list
+cd openclaw && uv run openclaw sessions list --status=active
+cd openclaw && uv run openclaw sessions show <session-id>
+cd openclaw && uv run openclaw sessions archive --older-than 7d
+
+# Channel pairing
+cd openclaw && uv run openclaw pairing list
+cd openclaw && uv run openclaw pairing approve <channel> <code>
+cd openclaw && uv run openclaw pairing revoke <channel>
+
+# Direct query (requires ANTHROPIC_API_KEY for agent invocation)
+cd openclaw && uv run openclaw query "Find all authentication code"
+cd openclaw && uv run openclaw query "Review server.py" --session <id>
+```
+
+### Gateway HTTP API
+
+| Endpoint | Method | Auth | Description |
+|----------|--------|------|-------------|
+| `/api/health` | GET | No | Uptime, active sessions, component status |
+| `/api/query` | POST | Yes | Main query (session + autoRecall + agents + autoCapture) |
+| `/api/sessions` | GET | Yes | List sessions (`?status=active\|archived`) |
+| `/api/sessions/{id}` | GET | Yes | Session detail with messages |
+| `/api/pairing` | POST | Yes | Request pairing code for a channel |
+| `/api/pairing/approve` | POST | Yes | Approve channel with pairing code |
 
 ## Docker Commands
 
