@@ -67,7 +67,7 @@ Tree-sitter Chunking ◄── File Discovery (.gitignore-aware)
 
 - Python 3.10+
 - [uv](https://github.com/astral-sh/uv) package manager
-- Docker (for MCP server only — no Python/uv required for that component)
+- Or: Docker (alternative to Python/uv for the MCP server component)
 - `ANTHROPIC_API_KEY` environment variable (required for agent team and OpenClaw queries)
 
 ### Install MCP Server
