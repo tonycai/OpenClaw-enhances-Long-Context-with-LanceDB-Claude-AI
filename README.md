@@ -6,11 +6,38 @@ A reference architecture and working implementation that gives [Claude Code CLI]
 2. **Agent Team** — 10 specialized Claude agents (via the Claude Agent SDK) for indexing, searching, reviewing, deploying, and more
 3. **OpenClaw Gateway** — A self-hosted AI assistant gateway with persistent memory, session management, security, and diagnostics
 
+## Table of Contents
+
+- [The Problem](#the-problem)
+- [The Solution](#the-solution)
+- [Quick Start](#quick-start)
+- [Search Pipeline](#search-pipeline)
+  - [Pipeline Details](#pipeline-details)
+  - [MCP Tools](#mcp-tools)
+  - [Multi-Project Support](#multi-project-support)
+  - [Server Lifecycle](#server-lifecycle)
+- [Supported Languages](#supported-languages)
+- [Configuration](#configuration)
+- [Agent Team (Claude Agent SDK)](#agent-team-claude-agent-sdk)
+- [OpenClaw Gateway](#openclaw-gateway)
+  - [Deployment](#deployment)
+  - [Gateway Configuration](#gateway-configuration)
+  - [HTTP API](#http-api)
+  - [CLI Usage](#cli-usage)
+  - [Security](#security)
+  - [Memory System](#memory-system)
+- [Key Dependencies](#key-dependencies)
+- [Project Structure](#project-structure)
+- [Documentation](#documentation)
+- [License](#license)
+
 ## The Problem
 
 Claude Code's context window is finite. On large repositories, reading every file to find relevant code is slow and expensive. Developers need a way to let Claude search by *meaning* — not just filenames or exact strings — so it can pinpoint the right code without exhausting its context.
 
 ## The Solution
+
+This project addresses the problem with three layers that work together: a semantic search server that indexes and searches code by meaning, an agent team that provides specialized capabilities on top of that search, and a gateway that ties everything together with persistent memory and session management.
 
 ```
 OpenClaw Gateway (HTTP/CLI)
@@ -31,78 +58,6 @@ LanceDB (vector + FTS, per-project tables)
 Tree-sitter Chunking ◄── File Discovery (.gitignore-aware)
 ```
 
-## Architecture
-
-```
-File Discovery → Tree-sitter Parsing → LanceDB Embedding → Hybrid Search
-  (respects        (syntax-aware          (auto-embed via      (vector + FTS
-   .gitignore)      chunking)              registry)            with RRF)
-```
-
-### Pipeline Details
-
-**File Discovery** (`indexer.py`): Walks the repository respecting `.gitignore` rules via `pathspec`. Skips sensitive files (`.env`, keys, certs), large files (>1 MB), and standard build/cache directories (`node_modules`, `__pycache__`, `.venv`, `target`, `dist`, etc.). Supports path-traversal protection for user-provided paths.
-
-**Chunking** (`chunker.py`): For supported languages, Tree-sitter parses source files into an AST and extracts top-level entities (functions, classes, interfaces, structs, enums, traits, impl blocks). Class bodies are decomposed into individual method chunks for granular search. Module-level code not covered by extracted entities is captured separately. Oversized chunks (>2000 chars / ~500 tokens) are split by lines with part numbering. For non-parsed languages, a line-based fallback (50 lines with 5-line overlap) is used.
-
-**Embedding**: LanceDB's embedding registry auto-embeds the `text` field using `sentence-transformers/all-MiniLM-L6-v2`. This model was benchmarked against `all-mpnet-base-v2` (110M) and `BAAI/bge-base-en-v1.5` (109M) and selected for best signal-to-noise discrimination on code search queries and fastest throughput (~2300 sentences/sec on CPU).
-
-**Search** (`server.py`): Supports three modes — `hybrid` (default, vector + FTS with RRF reranking), `vector` (pure semantic), and `fts` (pure keyword). Metadata filters (language, file path prefix, node type) are applied as prefilters. Results include file path, line range, node type, symbol name, relevance score, and a truncated snippet (200 chars).
-
-**Change Detection** (`indexer.py`): SHA-256 content hashing per file. On re-index, unchanged files are skipped. Changed files have their old chunks deleted before new chunks are inserted.
-
-### MCP Tools
-
-The server exposes 7 tools over MCP stdio transport:
-
-| Tool | Purpose |
-|------|---------|
-| `search_code` | Hybrid vector+FTS search with language, file path, and node_type filters |
-| `index_files` | Full or incremental indexing with SHA-256 content-hash change detection |
-| `index_status` | Check index health — chunk/file counts, languages, node types, vector/FTS index status |
-| `remove_files` | Remove deleted files from the index to keep it consistent |
-| `switch_project` | Switch to (or create) a named project context with its own isolated index |
-| `list_projects` | List all registered projects with repo roots and table names |
-| `remove_project` | Unregister a project and optionally drop its LanceDB table |
-
-All tools accept an optional `project` parameter to target a specific project. When omitted, the active project is used.
-
-### Multi-Project Support
-
-Each project gets its own LanceDB table, isolated from other projects. A `_projects.json` sidecar registry inside the DB directory tracks project metadata.
-
-- **Table naming**: `"default"` → `code_chunks` (legacy compatible), others → `project_{name}`
-- **Project names**: letters, digits, underscores, hyphens; 1–63 chars; must start with a letter
-- **Legacy fallback**: existing `code_chunks` tables are auto-adopted as the `"default"` project on first startup
-- **Registry file**: `{db_path}/_projects.json` (safe — LanceDB only scans for `*.lance/` dirs)
-
-**Multi-project workflow:**
-
-1. `switch_project("backend", repo_root="/path/to/backend")` — create and switch
-2. `index_files` — index the backend project
-3. `switch_project("frontend", repo_root="/path/to/frontend")` — create another
-4. `index_files` — index the frontend project
-5. `search_code(query, project="backend")` — search a specific project
-6. `list_projects` — see all projects (active marked with `*`)
-
-### Server Lifecycle
-
-On startup, the FastMCP server connects to LanceDB, loads the embedding function from the registry, initializes the multi-project registry (`projects.py`), and opens or creates tables for active projects. On shutdown, tables are compacted via `table.optimize()`. Custom exceptions (`errors.py`) provide structured error reporting for indexing, search, chunking, and project operations. Logging goes to stderr (required for stdio MCP servers).
-
-## Supported Languages
-
-**Tree-sitter syntax-aware chunking** (extracts functions, classes, methods, interfaces, structs, enums, traits, impl blocks):
-- Python, JavaScript, TypeScript, TSX, Rust, Go
-- Java, C, C++, Ruby, C# *(optional, install with `--extra all-languages`)*
-
-**Line-based fallback chunking** (50 lines, 5-line overlap):
-- Markdown, YAML, TOML, JSON, HTML, CSS, SCSS, Shell, SQL, GraphQL, Protobuf, Terraform, Dockerfiles
-
-**Always skipped**:
-- Sensitive files: `.env`, `*.pem`, `*.key`, `*.crt`, SSH keys
-- Large files: >1 MB
-- Build directories: `node_modules`, `__pycache__`, `.venv`, `target`, `build`, `dist`, `vendor`, etc.
-
 ## Quick Start
 
 ### Prerequisites
@@ -110,29 +65,24 @@ On startup, the FastMCP server connects to LanceDB, loads the embedding function
 - Python 3.10+
 - [uv](https://github.com/astral-sh/uv) package manager
 - Or: Docker (no Python/uv required)
+- `ANTHROPIC_API_KEY` environment variable (required for agent team and OpenClaw queries)
 
-### Install MCP Server (Native)
+### Install
 
 ```bash
-cd lancedb-mcp-server
-uv sync
+# MCP server
+cd lancedb-mcp-server && uv sync
 
 # Optional: add Java, C/C++, Ruby, C# grammars
 uv sync --extra all-languages
-```
 
-### Install Agent Team
+# Agent team
+cd ../agents && uv sync
 
-```bash
-cd agents && uv sync
-```
+# OpenClaw gateway
+cd ../openclaw && uv sync
 
-### Install OpenClaw Gateway
-
-```bash
-cd openclaw && uv sync
-
-# Interactive setup wizard
+# Interactive setup wizard — configures host, port, auth, directories
 uv run openclaw onboard
 
 # Verify installation
@@ -223,6 +173,78 @@ cd agents && uv run python test_agents.py
 cd openclaw && uv run pytest test_openclaw.py -v
 ```
 
+## Search Pipeline
+
+```
+File Discovery → Tree-sitter Parsing → LanceDB Embedding → Hybrid Search
+  (respects        (syntax-aware          (auto-embed via      (vector + FTS
+   .gitignore)      chunking)              registry)            with RRF)
+```
+
+### Pipeline Details
+
+**File Discovery** (`indexer.py`): Walks the repository respecting `.gitignore` rules via `pathspec`. Skips sensitive files (`.env`, keys, certs), large files (>1 MB), and standard build/cache directories (`node_modules`, `__pycache__`, `.venv`, `target`, `dist`, etc.). Supports path-traversal protection for user-provided paths.
+
+**Chunking** (`chunker.py`): For supported languages, Tree-sitter parses source files into an AST and extracts top-level entities (functions, classes, interfaces, structs, enums, traits, impl blocks). Class bodies are decomposed into individual method chunks for granular search. Module-level code not covered by extracted entities is captured separately. Oversized chunks (>2000 chars / ~500 tokens) are split by lines with part numbering. For non-parsed languages, a line-based fallback (50 lines with 5-line overlap) is used.
+
+**Embedding**: LanceDB's embedding registry auto-embeds the `text` field using `sentence-transformers/all-MiniLM-L6-v2`. This model was benchmarked against `all-mpnet-base-v2` (110M) and `BAAI/bge-base-en-v1.5` (109M) and selected for best signal-to-noise discrimination on code search queries and fastest throughput (~2300 sentences/sec on CPU).
+
+**Search** (`server.py`): Supports three modes — `hybrid` (default, vector + FTS with RRF reranking), `vector` (pure semantic), and `fts` (pure keyword). Metadata filters (language, file path prefix, node type) are applied as prefilters. Results include file path, line range, node type, symbol name, relevance score, and a truncated snippet (200 chars).
+
+**Change Detection** (`indexer.py`): SHA-256 content hashing per file. On re-index, unchanged files are skipped. Changed files have their old chunks deleted before new chunks are inserted.
+
+### MCP Tools
+
+The server exposes 7 tools over MCP stdio transport:
+
+| Tool | Purpose |
+|------|---------|
+| `search_code` | Hybrid vector+FTS search with language, file path, and node_type filters |
+| `index_files` | Full or incremental indexing with SHA-256 content-hash change detection |
+| `index_status` | Check index health — chunk/file counts, languages, node types, vector/FTS index status |
+| `remove_files` | Remove deleted files from the index to keep it consistent |
+| `switch_project` | Switch to (or create) a named project context with its own isolated index |
+| `list_projects` | List all registered projects with repo roots and table names |
+| `remove_project` | Unregister a project and optionally drop its LanceDB table |
+
+All tools accept an optional `project` parameter to target a specific project. When omitted, the active project is used.
+
+### Multi-Project Support
+
+Each project gets its own LanceDB table, isolated from other projects. A `_projects.json` sidecar registry inside the DB directory tracks project metadata.
+
+- **Table naming**: `"default"` → `code_chunks` (legacy compatible), others → `project_{name}`
+- **Project names**: letters, digits, underscores, hyphens; 1-63 chars; must start with a letter
+- **Legacy fallback**: existing `code_chunks` tables are auto-adopted as the `"default"` project on first startup
+- **Registry file**: `{db_path}/_projects.json` (safe — LanceDB only scans for `*.lance/` dirs)
+
+**Multi-project workflow:**
+
+1. `switch_project("backend", repo_root="/path/to/backend")` — create and switch
+2. `index_files` — index the backend project
+3. `switch_project("frontend", repo_root="/path/to/frontend")` — create another
+4. `index_files` — index the frontend project
+5. `search_code(query, project="backend")` — search a specific project
+6. `list_projects` — see all projects (active marked with `*`)
+
+### Server Lifecycle
+
+On startup, the FastMCP server connects to LanceDB, loads the embedding function from the registry, initializes the multi-project registry (`projects.py`), and opens or creates tables for active projects. On shutdown, tables are compacted via `table.optimize()`. Custom exceptions (`errors.py`) provide structured error reporting for indexing, search, chunking, and project operations. Logging goes to stderr (required for stdio MCP servers).
+
+## Supported Languages
+
+**Tree-sitter syntax-aware chunking** (extracts functions, classes, methods, interfaces, structs, enums, traits, impl blocks):
+- Python, JavaScript, TypeScript, TSX, Rust, Go
+- Java, C, C++, Ruby, C# *(optional, install with `--extra all-languages`)*
+
+**Line-based fallback chunking** (50 lines, 5-line overlap):
+- Markdown, YAML, TOML, JSON, HTML, CSS, SCSS, Shell, SQL, GraphQL, Protobuf, Terraform, Dockerfiles
+
+**Always skipped**:
+- Sensitive files: `.env`, `*.pem`, `*.key`, `*.crt`, SSH keys
+- Large files: >1 MB
+- Build directories: `node_modules`, `__pycache__`, `.venv`, `target`, `build`, `dist`, `vendor`, etc.
+
 ## Configuration
 
 All MCP server settings are via environment variables:
@@ -235,18 +257,7 @@ All MCP server settings are via environment variables:
 | `LANCEDB_EMBEDDING_MODEL` | `all-MiniLM-L6-v2` | Embedding model name (22M params, 384 dims) |
 | `LANCEDB_TABLE_NAME` | `code_chunks` | LanceDB table name (default project) |
 
-## Key Dependencies
-
-| Package | Component | Purpose |
-|---------|-----------|---------|
-| `lancedb` >=0.21.2 | MCP Server | Vector database with auto-embedding and hybrid search |
-| `mcp[cli]` >=1.6.0 | MCP Server | Model Context Protocol server framework (FastMCP) |
-| `sentence-transformers` >=4.0.0 | MCP Server | Embedding model (`all-MiniLM-L6-v2`) |
-| `tree-sitter` >=0.23.0 | MCP Server | Syntax-aware code parsing |
-| `pathspec` >=0.12.0 | MCP Server | `.gitignore`-compatible file matching |
-| `claude-agent-sdk` | Agents | Claude Agent SDK for multi-agent orchestration |
-| `aiohttp` | OpenClaw | Async HTTP gateway server |
-| `click` | OpenClaw | CLI framework |
+For OpenClaw gateway configuration, see [Gateway Configuration](#gateway-configuration).
 
 ## Agent Team (Claude Agent SDK)
 
@@ -323,8 +334,6 @@ uv run python orchestrator.py "Plan how to add WebSocket support"
 
 A self-hosted AI assistant gateway that wraps the agent team with persistent memory, session management, security, and diagnostics. All state is file-based — no external database required.
 
-### Architecture
-
 ```
 CLI / HTTP Client
     │
@@ -347,37 +356,54 @@ Agent Team → LanceDB MCP Server
 
 ### Deployment
 
-#### 1. Install and configure
+After installing dependencies (see [Quick Start](#quick-start)), run the setup wizard and start the gateway:
 
 ```bash
-cd openclaw && uv sync
+cd openclaw
 
-# Interactive setup wizard — configures host, port, auth, directories
+# Interactive setup — configures host, port, auth, directories
 uv run openclaw onboard
 
 # Verify everything is wired up correctly
 uv run openclaw doctor
+
+# Start the gateway (listens on 127.0.0.1:18789 by default)
+uv run openclaw start
+
+# Stop the gateway (sends SIGTERM via PID file)
+uv run openclaw stop
 ```
 
 The `onboard` wizard prompts for gateway host/port, authentication mode, and paths to the `agents/` and `lancedb-mcp-server/` directories. It saves config to `~/.openclaw/openclaw.json` and creates workspace seed files.
 
-#### 2. Start the gateway
+#### Production considerations
 
-```bash
-uv run openclaw start
+- **Network**: Default is localhost-only. Set `gateway.host` to `0.0.0.0` for remote access.
+- **TLS**: No built-in TLS — use a reverse proxy (nginx, Caddy) for HTTPS in production.
+- **Process management**: Use systemd, supervisord, or similar to keep the gateway running. The PID file (`gateway.pid`) supports basic start/stop.
+- **Scaling**: File-based sessions scale to 10k+ sessions. Memory entries stored as individual Markdown files. No database backend.
+- **Agent invocation**: The gateway invokes agents via subprocess (`uv --directory {agents_dir} run python orchestrator.py`). Requires `ANTHROPIC_API_KEY` in the environment.
+
+#### File layout on disk
+
+```
+~/.openclaw/
+├── openclaw.json        # Configuration
+├── channels.json        # Approved channel pairings
+├── gateway.pid          # PID file (while running)
+├── gateway.log          # Server logs
+└── sessions/
+    ├── abc123def456.json  # One file per session
+    └── xyz789abc123.json
+
+.memory/                 # In your workspace root
+├── SOUL.md              # Workspace identity and purpose
+├── MEMORY.md            # Cross-session memory index
+├── SESSION-STATE.md     # Current session state
+└── 2026-02-24-hybrid-search.md  # Individual memory entries
 ```
 
-The server listens on `127.0.0.1:18789` by default. It writes a PID file to `~/.openclaw/gateway.pid` and logs to `~/.openclaw/gateway.log`.
-
-#### 3. Stop the gateway
-
-```bash
-uv run openclaw stop
-```
-
-Sends SIGTERM to the running process and cleans up the PID file.
-
-#### Configuration
+### Gateway Configuration
 
 All settings live in `~/.openclaw/openclaw.json`. The `onboard` wizard generates this file, or you can create it manually:
 
@@ -424,38 +450,11 @@ All settings live in `~/.openclaw/openclaw.json`. The `onboard` wizard generates
 
 | Section | Key settings |
 |---------|-------------|
-| `gateway` | `host`, `port` (1–65535), `pid_file`, `log_file` |
+| `gateway` | `host`, `port` (1-65535), `pid_file`, `log_file` |
 | `auth` | `open_access` (true = no auth), `token` (Bearer token) |
 | `memory` | `auto_recall` / `auto_capture` toggles, `recall_limit`, `workspace_dir` |
 | `session` | `compaction_token_threshold` (min 1000), `archive_after_days` |
 | `security` | `allowed_workspace_roots` (blast radius), `pairing_code_ttl_seconds` (min 30) |
-
-#### Production considerations
-
-- **Network**: Default is localhost-only. Set `gateway.host` to `0.0.0.0` for remote access.
-- **TLS**: No built-in TLS — use a reverse proxy (nginx, Caddy) for HTTPS in production.
-- **Process management**: Use systemd, supervisord, or similar to keep the gateway running. The PID file (`gateway.pid`) supports basic start/stop.
-- **Scaling**: File-based sessions scale to 10k+ sessions. Memory entries stored as individual Markdown files. No database backend.
-- **Agent invocation**: The gateway invokes agents via subprocess (`uv --directory {agents_dir} run python orchestrator.py`). Requires `ANTHROPIC_API_KEY` in the environment.
-
-#### File layout on disk
-
-```
-~/.openclaw/
-├── openclaw.json        # Configuration
-├── channels.json        # Approved channel pairings
-├── gateway.pid          # PID file (while running)
-├── gateway.log          # Server logs
-└── sessions/
-    ├── abc123def456.json  # One file per session
-    └── xyz789abc123.json
-
-.memory/                 # In your workspace root
-├── SOUL.md              # Workspace identity and purpose
-├── MEMORY.md            # Cross-session memory index
-├── SESSION-STATE.md     # Current session state
-└── 2026-02-24-hybrid-search.md  # Individual memory entries
-```
 
 ### HTTP API
 
@@ -506,19 +505,19 @@ curl http://localhost:18789/api/health
 
 ### CLI Usage
 
-All commands are available via `uv run openclaw <command>` from the `openclaw/` directory.
+All commands run from the `openclaw/` directory using `uv run openclaw <command>`.
 
 #### Setup and diagnostics
 
 ```bash
 # Interactive setup wizard
-openclaw onboard
+uv run openclaw onboard
 
 # Run diagnostic checks
-openclaw doctor
+uv run openclaw doctor
 
 # Auto-repair missing directories and seed files
-openclaw doctor --repair
+uv run openclaw doctor --repair
 ```
 
 `doctor` checks: config file, workspace directory + seed files (SOUL.md, MEMORY.md, SESSION-STATE.md), sessions directory, log directory, MCP server directory, agents directory, and write permissions. Repairable issues are marked `[repairable]` and fixed with `--repair`.
@@ -527,26 +526,26 @@ openclaw doctor --repair
 
 ```bash
 # Start (foreground, logs to file)
-openclaw start
+uv run openclaw start
 
 # Stop (sends SIGTERM via PID file)
-openclaw stop
+uv run openclaw stop
 
 # View logs (last N lines, optionally follow)
-openclaw logs
-openclaw logs -n 100
-openclaw logs -f
-openclaw logs -f -n 50
+uv run openclaw logs
+uv run openclaw logs -n 100
+uv run openclaw logs -f
+uv run openclaw logs -f -n 50
 ```
 
 #### Querying
 
 ```bash
 # New session (session ID printed after response)
-openclaw query "Find all authentication code"
+uv run openclaw query "Find all authentication code"
 
 # Continue an existing session
-openclaw query "Review server.py" --session abc123def456
+uv run openclaw query "Review server.py" --session abc123def456
 ```
 
 The `query` command runs the full pipeline (autoRecall → agents → autoCapture) and prints the response followed by the session ID.
@@ -555,15 +554,15 @@ The `query` command runs the full pipeline (autoRecall → agents → autoCaptur
 
 ```bash
 # List all sessions (or filter by status)
-openclaw sessions list
-openclaw sessions list --status=active
-openclaw sessions list --status=archived
+uv run openclaw sessions list
+uv run openclaw sessions list --status=active
+uv run openclaw sessions list --status=archived
 
 # Show session detail with messages
-openclaw sessions show <session-id>
+uv run openclaw sessions show <session-id>
 
 # Archive sessions inactive for N days
-openclaw sessions archive --older-than 7d
+uv run openclaw sessions archive --older-than 7d
 ```
 
 Sessions are stored as individual JSON files in `~/.openclaw/sessions/`. Each session tracks messages, token estimates, and compaction count. When `total_tokens` exceeds the `compaction_token_threshold` (default 100k), the session is compacted (first + last message kept, summary marker inserted).
@@ -572,13 +571,13 @@ Sessions are stored as individual JSON files in `~/.openclaw/sessions/`. Each se
 
 ```bash
 # List approved channels
-openclaw pairing list
+uv run openclaw pairing list
 
 # Approve a channel with its 6-digit pairing code
-openclaw pairing approve discord-bot 123456
+uv run openclaw pairing approve discord-bot 123456
 
 # Revoke a channel
-openclaw pairing revoke discord-bot
+uv run openclaw pairing revoke discord-bot
 ```
 
 Pairing workflow: a client requests a code via `POST /api/pairing`, the admin approves it via CLI, and the channel is saved to `~/.openclaw/channels.json`. Codes expire after `pairing_code_ttl_seconds` (default 300).
@@ -605,6 +604,19 @@ The memory system provides cross-session persistence via Markdown files in the `
 **autoCapture**: After each agent response, scans query + response for decision/solution/preference/architecture keywords. Matching patterns are saved as dated Markdown files (e.g., `2026-02-24-hybrid-search.md`) with type, tags, summary, and details.
 
 Memory entry types: `decision`, `solution`, `preference`, `context`, `architecture`.
+
+## Key Dependencies
+
+| Package | Component | Purpose |
+|---------|-----------|---------|
+| `lancedb` >=0.21.2 | MCP Server | Vector database with auto-embedding and hybrid search |
+| `mcp[cli]` >=1.6.0 | MCP Server | Model Context Protocol server framework (FastMCP) |
+| `sentence-transformers` >=4.0.0 | MCP Server | Embedding model (`all-MiniLM-L6-v2`) |
+| `tree-sitter` >=0.23.0 | MCP Server | Syntax-aware code parsing |
+| `pathspec` >=0.12.0 | MCP Server | `.gitignore`-compatible file matching |
+| `claude-agent-sdk` | Agents | Claude Agent SDK for multi-agent orchestration |
+| `aiohttp` >=3.9.0 | OpenClaw | Async HTTP gateway server |
+| `click` >=8.1.0 | OpenClaw | CLI framework |
 
 ## Project Structure
 
@@ -663,7 +675,8 @@ Memory entry types: `decision`, `solution`, `preference`, `context`, `architectu
 │   ├── gateway.py             # Async HTTP gateway (aiohttp, 6 endpoints)
 │   ├── cli.py                 # Click-based CLI (onboard, start, stop, doctor, logs, etc.)
 │   ├── test_openclaw.py       # Comprehensive test suite (no API keys needed)
-│   └── pyproject.toml         # Package metadata and dependencies
+│   ├── pyproject.toml         # Package metadata and dependencies
+│   └── uv.lock                # Locked dependency versions
 ├── Docs/
 │   ├── Integrating-LanceDB-with-Claude-Code-CLI.md          # Architecture guide (36 citations)
 │   └── OpenClaw-LanceDB-Claude-CLI-Integration.md           # System integration guide
