@@ -321,7 +321,7 @@ uv run python orchestrator.py "Plan how to add WebSocket support"
 
 ## OpenClaw Gateway
 
-A self-hosted AI assistant gateway that wraps the agent team with persistent memory, session management, security, and diagnostics.
+A self-hosted AI assistant gateway that wraps the agent team with persistent memory, session management, security, and diagnostics. All state is file-based — no external database required.
 
 ### Architecture
 
@@ -345,6 +345,118 @@ CLI / HTTP Client
 Agent Team → LanceDB MCP Server
 ```
 
+### Deployment
+
+#### 1. Install and configure
+
+```bash
+cd openclaw && uv sync
+
+# Interactive setup wizard — configures host, port, auth, directories
+uv run openclaw onboard
+
+# Verify everything is wired up correctly
+uv run openclaw doctor
+```
+
+The `onboard` wizard prompts for gateway host/port, authentication mode, and paths to the `agents/` and `lancedb-mcp-server/` directories. It saves config to `~/.openclaw/openclaw.json` and creates workspace seed files.
+
+#### 2. Start the gateway
+
+```bash
+uv run openclaw start
+```
+
+The server listens on `127.0.0.1:18789` by default. It writes a PID file to `~/.openclaw/gateway.pid` and logs to `~/.openclaw/gateway.log`.
+
+#### 3. Stop the gateway
+
+```bash
+uv run openclaw stop
+```
+
+Sends SIGTERM to the running process and cleans up the PID file.
+
+#### Configuration
+
+All settings live in `~/.openclaw/openclaw.json`. The `onboard` wizard generates this file, or you can create it manually:
+
+```json
+{
+  "gateway": {
+    "host": "127.0.0.1",
+    "port": 18789,
+    "pid_file": "~/.openclaw/gateway.pid",
+    "log_file": "~/.openclaw/gateway.log"
+  },
+  "auth": {
+    "token": "",
+    "open_access": true
+  },
+  "memory": {
+    "workspace_dir": ".memory",
+    "auto_recall": true,
+    "auto_capture": true,
+    "recall_limit": 5
+  },
+  "session": {
+    "sessions_dir": "~/.openclaw/sessions",
+    "compaction_token_threshold": 100000,
+    "archive_after_days": 30
+  },
+  "security": {
+    "allowed_workspace_roots": [],
+    "channels_file": "~/.openclaw/channels.json",
+    "pairing_code_ttl_seconds": 300
+  },
+  "search": {
+    "query_type": "hybrid",
+    "limit": 10
+  },
+  "embedding": {
+    "provider": "sentence-transformers",
+    "model": "all-MiniLM-L6-v2"
+  },
+  "agents_dir": "/path/to/agents",
+  "mcp_server_dir": "/path/to/lancedb-mcp-server"
+}
+```
+
+| Section | Key settings |
+|---------|-------------|
+| `gateway` | `host`, `port` (1–65535), `pid_file`, `log_file` |
+| `auth` | `open_access` (true = no auth), `token` (Bearer token) |
+| `memory` | `auto_recall` / `auto_capture` toggles, `recall_limit`, `workspace_dir` |
+| `session` | `compaction_token_threshold` (min 1000), `archive_after_days` |
+| `security` | `allowed_workspace_roots` (blast radius), `pairing_code_ttl_seconds` (min 30) |
+
+#### Production considerations
+
+- **Network**: Default is localhost-only. Set `gateway.host` to `0.0.0.0` for remote access.
+- **TLS**: No built-in TLS — use a reverse proxy (nginx, Caddy) for HTTPS in production.
+- **Process management**: Use systemd, supervisord, or similar to keep the gateway running. The PID file (`gateway.pid`) supports basic start/stop.
+- **Scaling**: File-based sessions scale to 10k+ sessions. Memory entries stored as individual Markdown files. No database backend.
+- **Agent invocation**: The gateway invokes agents via subprocess (`uv --directory {agents_dir} run python orchestrator.py`). Requires `ANTHROPIC_API_KEY` in the environment.
+
+#### File layout on disk
+
+```
+~/.openclaw/
+├── openclaw.json        # Configuration
+├── channels.json        # Approved channel pairings
+├── gateway.pid          # PID file (while running)
+├── gateway.log          # Server logs
+└── sessions/
+    ├── abc123def456.json  # One file per session
+    └── xyz789abc123.json
+
+.memory/                 # In your workspace root
+├── SOUL.md              # Workspace identity and purpose
+├── MEMORY.md            # Cross-session memory index
+├── SESSION-STATE.md     # Current session state
+└── 2026-02-24-hybrid-search.md  # Individual memory entries
+```
+
 ### HTTP API
 
 | Endpoint | Method | Auth | Description |
@@ -356,47 +468,143 @@ Agent Team → LanceDB MCP Server
 | `/api/pairing` | POST | Yes | Request pairing code for a channel |
 | `/api/pairing/approve` | POST | Yes | Approve channel with pairing code |
 
-### CLI Commands
+**Authentication**: When `auth.open_access` is `false`, all endpoints except `/api/health` require an `Authorization: Bearer <token>` header. Tokens are compared using constant-time comparison.
+
+#### Query flow
 
 ```bash
-cd openclaw
-
-# Interactive setup
-uv run openclaw onboard
-
-# Diagnostics
-uv run openclaw doctor
-uv run openclaw doctor --repair
-
-# Start/stop gateway
-uv run openclaw start
-uv run openclaw stop
-
-# View logs
-uv run openclaw logs -f -n 100
-
-# Session management
-uv run openclaw sessions list
-uv run openclaw sessions list --status=active
-uv run openclaw sessions show <session-id>
-uv run openclaw sessions archive --older-than 7d
-
-# Channel pairing
-uv run openclaw pairing list
-uv run openclaw pairing approve <channel> <code>
-uv run openclaw pairing revoke <channel>
-
-# Direct query (requires ANTHROPIC_API_KEY)
-uv run openclaw query "Find all authentication code"
-uv run openclaw query "Review server.py" --session <id>
+curl -X POST http://localhost:18789/api/query \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "Find all authentication code", "session_id": "abc123def456"}'
 ```
 
-### Key Features
+The query pipeline:
+1. Get or create session (omit `session_id` to start a new one)
+2. Record user message
+3. **autoRecall** — search memory entries for relevant context, prepend to query
+4. **Invoke agent team** — subprocess call to `orchestrator.py` with augmented query
+5. Record assistant response
+6. **autoCapture** — extract facts from query/response using keyword heuristics, save as memory entries
+7. Return `{ "session_id": "...", "response": "..." }`
 
-- **Token auth + channel pairing**: Bearer-token authentication with channel-based access control and blast-radius limits
-- **File-based sessions**: CRUD with compaction and archival, no external database required
-- **Persistent memory**: Workspace files (SOUL, MEMORY, SESSION-STATE) with autoRecall and autoCapture
-- **Diagnostics**: Health checks, auto-repair, and terminal-friendly reports via `openclaw doctor`
+#### Health check
+
+```bash
+curl http://localhost:18789/api/health
+```
+
+```json
+{
+  "status": "ok",
+  "uptime_seconds": 3421.7,
+  "active_sessions": 3,
+  "checks_passed": 7,
+  "checks_total": 7
+}
+```
+
+### CLI Usage
+
+All commands are available via `uv run openclaw <command>` from the `openclaw/` directory.
+
+#### Setup and diagnostics
+
+```bash
+# Interactive setup wizard
+openclaw onboard
+
+# Run diagnostic checks
+openclaw doctor
+
+# Auto-repair missing directories and seed files
+openclaw doctor --repair
+```
+
+`doctor` checks: config file, workspace directory + seed files (SOUL.md, MEMORY.md, SESSION-STATE.md), sessions directory, log directory, MCP server directory, agents directory, and write permissions. Repairable issues are marked `[repairable]` and fixed with `--repair`.
+
+#### Gateway management
+
+```bash
+# Start (foreground, logs to file)
+openclaw start
+
+# Stop (sends SIGTERM via PID file)
+openclaw stop
+
+# View logs (last N lines, optionally follow)
+openclaw logs
+openclaw logs -n 100
+openclaw logs -f
+openclaw logs -f -n 50
+```
+
+#### Querying
+
+```bash
+# New session (session ID printed after response)
+openclaw query "Find all authentication code"
+
+# Continue an existing session
+openclaw query "Review server.py" --session abc123def456
+```
+
+The `query` command runs the full pipeline (autoRecall → agents → autoCapture) and prints the response followed by the session ID.
+
+#### Session management
+
+```bash
+# List all sessions (or filter by status)
+openclaw sessions list
+openclaw sessions list --status=active
+openclaw sessions list --status=archived
+
+# Show session detail with messages
+openclaw sessions show <session-id>
+
+# Archive sessions inactive for N days
+openclaw sessions archive --older-than 7d
+```
+
+Sessions are stored as individual JSON files in `~/.openclaw/sessions/`. Each session tracks messages, token estimates, and compaction count. When `total_tokens` exceeds the `compaction_token_threshold` (default 100k), the session is compacted (first + last message kept, summary marker inserted).
+
+#### Channel pairing
+
+```bash
+# List approved channels
+openclaw pairing list
+
+# Approve a channel with its 6-digit pairing code
+openclaw pairing approve discord-bot 123456
+
+# Revoke a channel
+openclaw pairing revoke discord-bot
+```
+
+Pairing workflow: a client requests a code via `POST /api/pairing`, the admin approves it via CLI, and the channel is saved to `~/.openclaw/channels.json`. Codes expire after `pairing_code_ttl_seconds` (default 300).
+
+### Security
+
+- **Two auth modes**: `open_access: true` (no auth, default) or `open_access: false` (Bearer token required on all endpoints except `/api/health`)
+- **Constant-time comparison**: Token and pairing code validation use `secrets.compare_digest()` to prevent timing attacks
+- **Channel pairing**: 6-digit codes with configurable TTL, persisted to `channels.json`
+- **Blast radius**: `security.allowed_workspace_roots` restricts file operations to specified directory trees. Empty list = no restrictions
+- **Tool audit**: Scans MCP tool descriptions for prompt-injection patterns ("ignore previous", "override", "system prompt", etc.)
+
+### Memory System
+
+The memory system provides cross-session persistence via Markdown files in the `.memory/` workspace directory.
+
+**Workspace files**:
+- `SOUL.md` — workspace identity and purpose (manually editable)
+- `MEMORY.md` — cross-session memory index (manually editable)
+- `SESSION-STATE.md` — current session state (auto-updated)
+
+**autoRecall**: Before each agent invocation, queries memory entries using keyword matching (or MCP semantic search if configured). Up to `recall_limit` (default 5) relevant memories are prepended to the query as context.
+
+**autoCapture**: After each agent response, scans query + response for decision/solution/preference/architecture keywords. Matching patterns are saved as dated Markdown files (e.g., `2026-02-24-hybrid-search.md`) with type, tags, summary, and details.
+
+Memory entry types: `decision`, `solution`, `preference`, `context`, `architecture`.
 
 ## Project Structure
 
