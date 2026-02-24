@@ -297,7 +297,7 @@ Markdown, YAML, TOML, JSON, HTML, CSS, SCSS, Shell scripts, SQL, GraphQL, Protob
 6. Call `list_projects` to see all registered projects (active marked with `*`)
 7. Call `switch_project("backend")` to switch back without re-creating
 
-## MCP Servers
+## Configured MCP Servers
 
 Three MCP servers are configured:
 
