@@ -19,7 +19,10 @@ A reference architecture and working implementation that gives [Claude Code CLI]
 - [Supported Languages](#supported-languages)
 - [Configuration](#configuration)
 - [Agent Team (Claude Agent SDK)](#agent-team-claude-agent-sdk)
+  - [Agent Architecture](#agent-architecture)
+  - [Agent Usage](#agent-usage)
 - [OpenClaw Gateway](#openclaw-gateway)
+  - [Architecture](#architecture)
   - [Deployment](#deployment)
   - [Gateway Configuration](#gateway-configuration)
   - [HTTP API](#http-api)
@@ -64,23 +67,28 @@ Tree-sitter Chunking ◄── File Discovery (.gitignore-aware)
 
 - Python 3.10+
 - [uv](https://github.com/astral-sh/uv) package manager
-- Or: Docker (no Python/uv required)
+- Docker (for MCP server only — no Python/uv required for that component)
 - `ANTHROPIC_API_KEY` environment variable (required for agent team and OpenClaw queries)
 
-### Install
+### Install MCP Server
 
 ```bash
-# MCP server
 cd lancedb-mcp-server && uv sync
 
 # Optional: add Java, C/C++, Ruby, C# grammars
 uv sync --extra all-languages
+```
 
-# Agent team
-cd ../agents && uv sync
+### Install Agent Team
 
-# OpenClaw gateway
-cd ../openclaw && uv sync
+```bash
+cd agents && uv sync
+```
+
+### Install OpenClaw Gateway
+
+```bash
+cd openclaw && uv sync
 
 # Interactive setup wizard — configures host, port, auth, directories
 uv run openclaw onboard
@@ -263,7 +271,7 @@ For OpenClaw gateway configuration, see [Gateway Configuration](#gateway-configu
 
 A team of specialized agents built with the [Claude Agent SDK](https://github.com/anthropics/claude-agent-sdk-python) that provides a programmatic interface to the LanceDB code search tools.
 
-### Architecture
+### Agent Architecture
 
 ```
 User Query
@@ -333,6 +341,8 @@ uv run python orchestrator.py "Plan how to add WebSocket support"
 ## OpenClaw Gateway
 
 A self-hosted AI assistant gateway that wraps the agent team with persistent memory, session management, security, and diagnostics. All state is file-based — no external database required.
+
+### Architecture
 
 ```
 CLI / HTTP Client
