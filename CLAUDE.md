@@ -16,6 +16,7 @@ This project provides both a reference architecture document and a working imple
   - `config.py` — Environment-based configuration
   - `errors.py` — Custom exception hierarchy (IndexingError, SearchError, ChunkingError, ProjectError)
   - `test_integration.py` — End-to-end integration test (discovery, chunking, indexing, search, multi-project)
+  - `test_acceptance.py` — Acceptance tests
   - `pyproject.toml` — Dependencies and build config
   - `uv.lock` — Locked dependency versions
   - `Dockerfile` — Multi-stage build: builder (uv + deps + model prefetch) → runtime (slim + git)
@@ -41,12 +42,37 @@ This project provides both a reference architecture document and a working imple
   - `cli.py` — Click-based CLI (onboard, start, stop, doctor, logs, sessions, pairing, query)
   - `pyproject.toml` — Package metadata and dependencies
   - `test_openclaw.py` — Comprehensive test suite (no API keys needed)
-- `Docs/` — Architectural guide with 36 citations
+  - `uv.lock` — Locked dependency versions
+- `Docs/` — Architecture guides
+  - `Integrating-LanceDB-with-Claude-Code-CLI.md` — Architecture guide (36 citations)
+  - `OpenClaw-LanceDB-Claude-CLI-Integration.md` — System integration guide
 - `.mcp.json` — MCP server definitions (gitignored)
 - `.claude/settings.local.json` — Claude Code local settings
 - `CLAUDE.md` — This file (project guidance for Claude Code)
 
-## Development Commands
+## Architecture
+
+The server follows a pipeline: **file discovery** (respecting .gitignore) → **Tree-sitter parsing** (syntax-aware chunks for Python, JS, TS, Rust, Go) → **auto-embedding** via LanceDB registry → **hybrid search** with Reciprocal Rank Fusion.
+
+Key design decisions:
+- Table-per-project isolation with a `_projects.json` sidecar registry
+- Content-hash (SHA-256) change detection skips unchanged files on re-index
+- Oversized chunks (>2000 chars) are split by lines with part numbering
+- Class bodies are decomposed into individual method chunks for granular search
+- Module-level code not covered by extracted entities is captured separately
+- Sensitive files (.env, keys, certs) and large files (>1 MB) are always skipped
+- Embedding model `all-MiniLM-L6-v2` (22M params, 384 dims) chosen for best signal-to-noise discrimination on code search and fastest throughput — benchmarked against `all-mpnet-base-v2` and `BAAI/bge-base-en-v1.5`
+
+Search results are compact (file path, line range, node type, symbol name, truncated snippet) so Claude can decide what to `Read` in full without wasting context tokens.
+
+### Deployment options
+
+| Method | Command | GPU | Use case |
+|--------|---------|-----|----------|
+| Native | `uv run server.py` | MPS (Apple Silicon) | Local development |
+| Docker | `docker run -i --rm ...` | CPU only | Portability, CI, no local deps |
+
+## MCP Server Commands
 
 ```bash
 # Install dependencies
@@ -87,18 +113,18 @@ cd agents && uv run python orchestrator.py "Plan how to add WebSocket support"
 
 The agent team uses the Claude Agent SDK with 9 specialist subagents:
 
-| Agent | Role | Tools |
-|-------|------|-------|
-| Orchestrator | Routes queries to specialists | Task |
-| Indexer | Full/incremental indexing, status | index_files, index_status, remove_files |
-| Searcher | Semantic code search | search_code, index_status, Read, Grep, Glob |
-| Reviewer | Code quality/security review | search_code, Read, Grep, Glob |
-| Q&A | Codebase explanations | search_code, index_status, Read, Grep, Glob |
-| Deployer | Docker builds, config validation | Bash, Read, Grep, Glob |
-| Memory | Cross-session episodic memory | search_code, index_files, index_status, switch_project, list_projects, Read, Write |
-| Security | Vulnerability scanning, secrets detection | search_code, Read, Grep, Glob, Bash |
-| DevOps | Health monitoring, diagnostics | index_status, list_projects, Bash, Read, Grep |
-| Planner | Implementation plans, task decomposition | search_code, Read, Grep, Glob, Write, Task |
+| Agent | Role | Model | Tools |
+|-------|------|-------|-------|
+| Orchestrator | Routes queries to specialists | Sonnet | Task |
+| Indexer | Full/incremental indexing, status | Haiku | index_files, index_status, remove_files |
+| Searcher | Semantic code search | Sonnet | search_code, index_status, Read, Grep, Glob |
+| Reviewer | Code quality/security review | Opus | search_code, Read, Grep, Glob |
+| Q&A | Codebase explanations | Sonnet | search_code, index_status, Read, Grep, Glob |
+| Deployer | Docker builds, config validation | Sonnet | Bash, Read, Grep, Glob |
+| Memory | Cross-session episodic memory | Sonnet | search_code, index_files, index_status, switch_project, list_projects, Read, Write |
+| Security | Vulnerability scanning, secrets detection | Opus | search_code, Read, Grep, Glob, Bash |
+| DevOps | Health monitoring, diagnostics | Haiku | index_status, list_projects, Bash, Read, Grep |
+| Planner | Implementation plans, task decomposition | Opus | search_code, Read, Grep, Glob, Write, Task |
 
 All agents connect to the lancedb-code MCP server via stdio transport. Prompts are in `agents/prompts/*.md` (editable without code changes).
 
@@ -140,6 +166,21 @@ cd openclaw && uv run openclaw pairing revoke <channel>
 cd openclaw && uv run openclaw query "Find all authentication code"
 cd openclaw && uv run openclaw query "Review server.py" --session <id>
 ```
+
+### OpenClaw Configuration
+
+Config file: `~/.openclaw/openclaw.json` (generated by `openclaw onboard`, or create manually).
+
+Key settings:
+- `gateway.host` / `gateway.port` — Server bind address (default `127.0.0.1:18789`)
+- `auth.open_access` — `true` disables auth (default), `false` requires Bearer token
+- `auth.token` — Bearer token for API authentication
+- `memory.auto_recall` / `memory.auto_capture` — Toggle memory features (default `true`)
+- `memory.workspace_dir` — Memory workspace path (default `.memory`)
+- `session.sessions_dir` — Session storage path (default `~/.openclaw/sessions`)
+- `session.compaction_token_threshold` — Token count before session compaction (default 100000)
+- `security.allowed_workspace_roots` — Blast radius for file operations (default `[]` = unrestricted)
+- `agents_dir` / `mcp_server_dir` — Paths to agent team and MCP server directories
 
 ### Gateway HTTP API
 
@@ -209,7 +250,7 @@ The `lancedb-code` server exposes 7 tools over stdio:
 | `list_projects` | List all registered projects with repo roots and table names |
 | `remove_project` | Unregister a project (optionally drop its LanceDB table) |
 
-All existing tools accept an optional `project` parameter to target a specific project. When omitted, the active project is used.
+All tools accept an optional `project` parameter to target a specific project. When omitted, the active project is used.
 
 ### Multi-project support
 
@@ -255,28 +296,6 @@ Markdown, YAML, TOML, JSON, HTML, CSS, SCSS, Shell scripts, SQL, GraphQL, Protob
 5. Call `search_code(query, project="backend")` to search a specific project
 6. Call `list_projects` to see all registered projects (active marked with `*`)
 7. Call `switch_project("backend")` to switch back without re-creating
-
-## Architecture
-
-The server follows a pipeline: **file discovery** (respecting .gitignore) → **Tree-sitter parsing** (syntax-aware chunks for Python, JS, TS, Rust, Go) → **auto-embedding** via LanceDB registry → **hybrid search** with Reciprocal Rank Fusion.
-
-Key design decisions:
-- Table-per-project isolation with a `_projects.json` sidecar registry
-- Content-hash (SHA-256) change detection skips unchanged files on re-index
-- Oversized chunks (>2000 chars) are split by lines with part numbering
-- Class bodies are decomposed into individual method chunks for granular search
-- Module-level code not covered by extracted entities is captured separately
-- Sensitive files (.env, keys, certs) and large files (>1 MB) are always skipped
-- Embedding model `all-MiniLM-L6-v2` (22M params, 384 dims) chosen for best signal-to-noise discrimination on code search and fastest throughput — benchmarked against `all-mpnet-base-v2` and `BAAI/bge-base-en-v1.5`
-
-Search results are compact (file path, line range, node type, symbol name, truncated snippet) so Claude can decide what to `Read` in full without wasting context tokens.
-
-### Deployment options
-
-| Method | Command | GPU | Use case |
-|--------|---------|-----|----------|
-| Native | `uv run server.py` | MPS (Apple Silicon) | Local development |
-| Docker | `docker run -i --rm ...` | CPU only | Portability, CI, no local deps |
 
 ## MCP Servers
 
